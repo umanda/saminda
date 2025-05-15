@@ -1,0 +1,63 @@
+name: Deploy Laravel to AWS EC2
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+      
+    - name: Setup SSH
+      uses: webfactory/ssh-agent@v0.7.0
+      with:
+        ssh-private-key: ${{ secrets.SSH_PRIVATE_KEY }}
+        
+    - name: Add EC2 host key to known hosts
+      run: |
+        mkdir -p ~/.ssh
+        ssh-keyscan -H ${{ secrets.EC2_HOST }} >> ~/.ssh/known_hosts
+        
+    - name: Deploy to EC2
+      env:
+        EC2_USER: ${{ secrets.EC2_USER }}
+        EC2_HOST: ${{ secrets.EC2_HOST }}
+      run: |
+        # Create deployment directory structure on remote server if it doesn't exist
+        ssh $EC2_USER@$EC2_HOST "mkdir -p /var/www/saminda"
+        
+        # Copy Docker configuration files
+        scp -r docker docker-compose.yml .env.example $EC2_USER@$EC2_HOST:/var/www/saminda/
+        
+        # Copy application files
+        scp -r app artisan bootstrap composer.json composer.lock config database lang \
+        public resources routes storage tests vendor .env.example \
+        $EC2_USER@$EC2_HOST:/var/www/saminda/
+        
+        # Set up .env file from secrets
+        ssh $EC2_USER@$EC2_HOST "cd /var/www/saminda && \
+          echo '${{ secrets.ENV_FILE }}' > .env"
+        
+        # Fix permissions
+        ssh $EC2_USER@$EC2_HOST "cd /var/www/saminda && \
+          sudo chown -R $EC2_USER:$EC2_USER . && \
+          find . -type d -exec chmod 755 {} \; && \
+          find . -type f -exec chmod 644 {} \; && \
+          chmod -R 775 storage bootstrap/cache"
+        
+        # Build and start Docker containers
+        ssh $EC2_USER@$EC2_HOST "cd /var/www/saminda && \
+          docker-compose down && \
+          docker-compose build && \
+          docker-compose up -d"
+        
+        # Run migrations and optimize
+        ssh $EC2_USER@$EC2_HOST "cd /var/www/saminda && \
+          docker-compose exec -T app php artisan migrate --force && \
+          docker-compose exec -T app php artisan optimize && \
+          docker-compose exec -T app php artisan storage:link"

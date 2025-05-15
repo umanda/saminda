@@ -25,6 +25,7 @@ RUN docker-php-ext-install pdo_mysql mbstring exif pcntl bcmath gd zip
 COPY --from=composer:latest /usr/bin/composer /usr/bin/composer
 
 # Create system user to run Composer and Artisan Commands
+RUN useradd -G www-data,root -u $uid -d /home/$user $user || echo "User exists"
 RUN mkdir -p /home/$user/.composer && \
     chown -R $user:$user /home/$user
 
@@ -34,8 +35,11 @@ WORKDIR /var/www/html
 # Copy existing application directory contents
 COPY . /var/www/html
 
-# Copy existing application directory permissions
-COPY --chown=$user:$user . /var/www/html
+# Set correct permissions
+RUN chown -R $user:$user /var/www/html
+RUN find /var/www/html -type d -exec chmod 755 {} \;
+RUN find /var/www/html -type f -exec chmod 644 {} \;
+RUN chmod -R 775 /var/www/html/storage /var/www/html/bootstrap/cache
 
 # Change current user
 USER $user

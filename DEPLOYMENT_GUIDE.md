@@ -334,6 +334,15 @@ scp -i saminda-key.pem ec2-user@xx.xx.xx.xx:~/saminda-backup-*.sql ./backups/
    sudo chown -R ec2-user:ec2-user /var/www/saminda
    ```
 
+### Permission denied Errors on Containers
+
+   - Fix storage permissions: `docker-compose exec app chmod -R 775 storage bootstrap/cache`
+   - For composer permission issues, use the root user: `docker-compose exec --user=root app composer install`
+   - If composer install fails with "Permission denied" errors, fix container permissions:
+        ```bash
+        docker-compose exec --user=root app bash -c "chown -R saminda:saminda /var/www/html/vendor"
+        ```
+
 ## Scaling Considerations
 
 When your application grows:

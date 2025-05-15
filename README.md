@@ -272,6 +272,11 @@ For production, set up HTTPS:
 
 3. **Permission problems**
    - Fix storage permissions: `docker-compose exec app chmod -R 775 storage bootstrap/cache`
+   - For composer permission issues, use the root user: `docker-compose exec --user=root app composer install`
+   - If composer install fails with "Permission denied" errors, fix container permissions:
+     ```bash
+     docker-compose exec --user=root app bash -c "chown -R saminda:saminda /var/www/html/vendor"
+     ```
 
 4. **Deployment failures**
    - Check GitHub Actions logs for errors
