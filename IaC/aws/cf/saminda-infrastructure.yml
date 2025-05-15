@@ -1,0 +1,170 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation template for saminda Laravel application deployment'
+
+Parameters:
+  KeyName:
+    Description: Name of an existing EC2 KeyPair to enable SSH access to the instance
+    Type: AWS::EC2::KeyPair::KeyName
+    ConstraintDescription: Must be the name of an existing EC2 KeyPair.
+  
+  InstanceType:
+    Description: EC2 instance type
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.medium
+    ConstraintDescription: Must be a valid EC2 instance type.
+  
+  SSHLocation:
+    Description: The IP address range that can SSH to the EC2 instance
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: '(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})/(\d{1,2})'
+    ConstraintDescription: Must be a valid IP CIDR range of the form x.x.x.x/x.
+
+Resources:
+  SamindaVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: saminda-vpc
+
+  SamindaPublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref SamindaVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - 0
+        - !GetAZs ''
+      Tags:
+        - Key: Name
+          Value: saminda-public-subnet
+
+  SamindaInternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: saminda-igw
+
+  SamindaGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref SamindaVPC
+      InternetGatewayId: !Ref SamindaInternetGateway
+
+  SamindaPublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref SamindaVPC
+      Tags:
+        - Key: Name
+          Value: saminda-public-rt
+
+  SamindaPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: SamindaGatewayAttachment
+    Properties:
+      RouteTableId: !Ref SamindaPublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref SamindaInternetGateway
+
+  SamindaPublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref SamindaPublicSubnet
+      RouteTableId: !Ref SamindaPublicRouteTable
+
+  SamindaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH and Web access
+      VpcId: !Ref SamindaVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref SSHLocation
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: saminda-sg
+
+  SamindaInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      ImageId: ami-0c7217cdde317cfec  # Amazon Linux 2023 AMI (us-east-1)
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true
+          DeviceIndex: 0
+          GroupSet:
+            - !Ref SamindaSecurityGroup
+          SubnetId: !Ref SamindaPublicSubnet
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash -ex
+          
+          # Update system
+          dnf update -y
+          
+          # Install Docker
+          dnf install -y docker
+          systemctl enable docker
+          systemctl start docker
+          
+          # Install Docker Compose
+          curl -L "https://github.com/docker/compose/releases/latest/download/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
+          chmod +x /usr/local/bin/docker-compose
+          
+          # Add ec2-user to the docker group
+          usermod -a -G docker ec2-user
+          
+          # Install Git
+          dnf install -y git
+          
+          # Create app directory
+          mkdir -p /var/www/saminda
+          chown ec2-user:ec2-user /var/www/saminda
+          
+      Tags:
+        - Key: Name
+          Value: saminda-instance
+
+  SamindaEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+      InstanceId: !Ref SamindaInstance
+      Tags:
+        - Key: Name
+          Value: saminda-eip
+
+Outputs:
+  InstancePublicIP:
+    Description: The public IP address of the EC2 instance
+    Value: !GetAtt SamindaInstance.PublicIp
+  
+  InstanceElasticIP:
+    Description: The Elastic IP address of the EC2 instance
+    Value: !Ref SamindaEIP
+    
+  WebsiteURL:
+    Description: URL to access the Laravel application
+    Value: !Sub http://${SamindaEIP}/
